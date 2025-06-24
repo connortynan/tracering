@@ -66,16 +66,16 @@ In another (or however many you want!):
 ## Usage in Your Project
 
 1. Add `include/tracer/` to your includes.
-2. Link against `libtracer.a` or add `tracer_emit.c` to your build.
+2. Link against `libtracer.a` or add `tracering_emitter.c` to your build.
 3. Emit trace events:
 
 ```c
-#include <tracer/tracer_emit.h>
+#include <tracering/emitter.h>
 
 tracer_emit_init();
 
-TRACE_NOTIFY("start");
-TRACE("loop", {
+TRACE_NOTIFY(Start);
+TRACE(Loop, {
     do_work();
 });
 
