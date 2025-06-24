@@ -7,7 +7,7 @@
 #include <pthread.h>
 
 #define TRACER_ALLOW_OVERWRITE 0
-#include <tracering/emitter.h>
+#include <tracering/tracering.h>
 
 #define NUM_THREADS 4
 #define EVENTS_PER_THREAD 10

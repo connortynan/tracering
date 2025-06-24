@@ -1,5 +1,4 @@
  - Proper CMake library installation
- - C++ Wrappers
  - Prebuilt reciever programs
  - Unit tests (?)
  - Make things portable (or implement platform specific implementations)

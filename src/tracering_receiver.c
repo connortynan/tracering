@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include "tracering/receiver.h"
+#include "tracering/receiver_ex.h"
 #include <unistd.h>
 #include <stddef.h>
 #include <pthread.h>
@@ -16,21 +17,31 @@
 
 typedef struct
 {
+    trace_event_handler_ex_t handler;
+    void *context;
+} handler_entry_t;
+
+typedef struct
+{
     const trace_event_t *event;
-    trace_event_handler_t handler;
+    trace_event_handler_ex_t handler;
+    void *context;
 } callback_task_t;
 
 static trace_shared_buffer_t *shared_buffer = NULL;
 static int shm_fd = -1;
-static trace_event_handler_t handlers[MAX_HANDLERS];
+
+static handler_entry_t handlers[MAX_HANDLERS];
 static int handler_count = 0;
 static pthread_mutex_t handler_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static pthread_t workers[TRACER_RECEIVER_THREADS];
 static callback_task_t task_queue[MAX_HANDLERS];
 static int task_count = 0;
-static pthread_mutex_t task_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t task_available = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t tasks_completed = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t task_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static int pending_tasks = 0;
 static bool running = false;
 
@@ -60,7 +71,7 @@ static void *worker_thread(void *arg)
         pthread_mutex_unlock(&task_mutex);
 
         // Execute the callback
-        task.handler(task.event);
+        task.handler(task.event, task.context);
 
         // Signal completion
         pthread_mutex_lock(&task_mutex);
@@ -164,22 +175,20 @@ void tracer_receiver_shutdown(void)
 void tracer_receiver_poll(void)
 {
     if (shared_buffer == NULL || !running)
-        return; // Not initialized or shutting down
+        return;
 
     uint32_t read_idx = atomic_load_explicit(&shared_buffer->read_index, memory_order_acquire);
     uint32_t write_idx = atomic_load_explicit(&shared_buffer->write_index, memory_order_acquire);
 
     while (read_idx != write_idx)
     {
-        uint32_t buffer_read_idx = read_idx & (TRACE_BUFFER_SIZE - 1); // Wrap around for circular buffer
+        uint32_t buffer_read_idx = read_idx & (TRACE_BUFFER_SIZE - 1);
         if (GET_EVENT_VALID(shared_buffer, buffer_read_idx))
         {
-            // Copy event locally for processing
             trace_event_t local_event = shared_buffer->events[buffer_read_idx];
             CLEAR_EVENT_VALID(shared_buffer, buffer_read_idx);
 
-            // Take a stable snapshot of handlers
-            trace_event_handler_t local_handlers[MAX_HANDLERS];
+            handler_entry_t local_handlers[MAX_HANDLERS];
             int local_count = 0;
             pthread_mutex_lock(&handler_mutex);
             for (int i = 0; i < handler_count; i++)
@@ -194,26 +203,25 @@ void tracer_receiver_poll(void)
             for (int i = 0; i < local_count && task_count < MAX_HANDLERS; i++)
             {
                 task_queue[task_count].event = &local_event;
-                task_queue[task_count].handler = local_handlers[i];
+                task_queue[task_count].handler = local_handlers[i].handler;
+                task_queue[task_count].context = local_handlers[i].context;
                 task_count++;
                 pending_tasks++;
             }
             pthread_cond_broadcast(&task_available); // Wake workers
-            // Wait for all callbacks to complete before next event
             while (pending_tasks > 0)
             {
                 pthread_cond_wait(&tasks_completed, &task_mutex);
             }
             pthread_mutex_unlock(&task_mutex);
         }
-        // Advance read index
+
         atomic_store_explicit(&shared_buffer->read_index, read_idx++, memory_order_release);
-        // Reload write_idx for next iteration
         write_idx = atomic_load_explicit(&shared_buffer->write_index, memory_order_acquire);
     }
 }
 
-void tracer_receiver_register_handler(trace_event_handler_t handler)
+void tracer_receiver_register_handler_ex(trace_event_handler_ex_t handler, void *context)
 {
     if (handler == NULL)
         return;
@@ -225,28 +233,31 @@ void tracer_receiver_register_handler(trace_event_handler_t handler)
         pthread_mutex_unlock(&handler_mutex);
         return; // Handler limit reached
     }
+
     // Check for duplicates
     for (int i = 0; i < handler_count; i++)
     {
-        if (handlers[i] == handler)
+        if (handlers[i].handler == handler && handlers[i].context == context)
         {
             pthread_mutex_unlock(&handler_mutex);
-            return; // Already exists
+            return; // Already registered
         }
     }
-    handlers[handler_count++] = handler;
+    handlers[handler_count].handler = handler;
+    handlers[handler_count].context = context;
+    handler_count++;
 
     pthread_mutex_unlock(&handler_mutex);
 }
 
-void tracer_receiver_unregister_handler(trace_event_handler_t handler)
+void tracer_receiver_unregister_handler_ex(trace_event_handler_ex_t handler, void *context)
 {
     if (handler == NULL)
         return;
     pthread_mutex_lock(&handler_mutex);
     for (int i = 0; i < handler_count; i++)
     {
-        if (handlers[i] == handler)
+        if (handlers[i].handler == handler && handlers[i].context == context)
         {
             // Remove by shifting
             for (int j = i; j < handler_count - 1; j++)
@@ -258,4 +269,21 @@ void tracer_receiver_unregister_handler(trace_event_handler_t handler)
         }
     }
     pthread_mutex_unlock(&handler_mutex);
+}
+
+// Adapter trampoline for legacy handlers (no context)
+static void handler_adapter(const trace_event_t *event, void *context)
+{
+    trace_event_handler_t fn = (trace_event_handler_t)context;
+    fn(event);
+}
+
+void tracer_receiver_register_handler(trace_event_handler_t handler)
+{
+    tracer_receiver_register_handler_ex(handler_adapter, (void *)handler);
+}
+
+void tracer_receiver_unregister_handler(trace_event_handler_t handler)
+{
+    tracer_receiver_unregister_handler_ex(handler_adapter, (void *)handler);
 }
