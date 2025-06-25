@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include "tracering/receiver.h"
 
 #define MAX_STACK_DEPTH 32
 #define MAX_HANDLERS 16
@@ -68,6 +69,7 @@ static void notify_handlers(const trace_span_t *span)
 
 int stack_trace_adapter_init(void)
 {
+    tracer_receiver_register_handler(stack_trace_event_handler);
     pthread_mutex_lock(&adapter_mutex);
 
     // Initialize all thread stacks

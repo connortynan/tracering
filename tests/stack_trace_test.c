@@ -6,8 +6,6 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-#define TRACER_ALLOW_OVERWRITE 0
-#include <tracering/tracering.h>
 #include <tracering/receiver.h>
 #include <tracering/adapter/stack_trace.h>
 
@@ -38,26 +36,6 @@ void trace_span_handler(const trace_span_t *span)
     fflush(stdout);
 }
 
-void *worker_thread(void *arg)
-{
-    int thread_num = *(int *)arg;
-
-    TRACE(WorkerMain, {
-        for (int i = 0; i < EVENTS_PER_THREAD; ++i)
-        {
-            TRACE(WorkerLoop, {
-                TRACE(WorkerInner, {
-                    SLEEP_NS(50000000); // 50ms of work
-                });
-                SLEEP_NS(25000000); // 25ms between inner tasks
-            });
-        }
-    });
-
-    printf("Worker thread %d completed\n", thread_num);
-    return NULL;
-}
-
 void *receiver_thread(void *arg)
 {
     (void)arg;
@@ -81,13 +59,6 @@ int main(void)
 
     tracer_receiver_init();
 
-    // Initialize tracer components
-    if (tracer_emit_init() != 0)
-    {
-        fprintf(stderr, "Failed to initialize tracer emitter\n");
-        return 1;
-    }
-
     if (stack_trace_adapter_init() != 0)
     {
         fprintf(stderr, "Failed to initialize stack trace adapter\n");
@@ -106,43 +77,10 @@ int main(void)
         return 1;
     }
 
-    // Give receiver time to start
-    SLEEP_NS(10000000); // 10ms
-
-    TRACE(Main, {
-        pthread_t threads[NUM_THREADS];
-        int thread_ids[NUM_THREADS];
-
-        TRACE(ThreadCreation, {
-            for (int i = 0; i < NUM_THREADS; ++i)
-            {
-                thread_ids[i] = i;
-                if (pthread_create(&threads[i], NULL, worker_thread, &thread_ids[i]) != 0)
-                {
-                    perror("pthread_create");
-                    return 1;
-                }
-            }
-        });
-
-        TRACE(ThreadJoin, {
-            for (int i = 0; i < NUM_THREADS; ++i)
-            {
-                pthread_join(threads[i], NULL);
-            }
-        });
-    });
-
-    // Let receiver process remaining events
-    SLEEP_NS(100000000); // 100ms
-
-    // Shutdown
-    keep_running = 0;
     pthread_join(receiver_tid, NULL);
 
     stack_trace_adapter_shutdown();
     tracer_receiver_shutdown();
-    tracer_emit_shutdown();
 
     printf("Stack trace test completed\n");
     return 0;

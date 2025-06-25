@@ -8,7 +8,7 @@ TEST_DIR = tests
 INCLUDE_DIR = include
 
 LIB_OBJS = $(BUILD_DIR)/tracering_emitter.o $(BUILD_DIR)/tracering_receiver.o
-LIB_NAME = $(BUILD_DIR)/libtracer.a
+LIB_NAME = $(BUILD_DIR)/libtracering.a
 
 TESTS = $(BUILD_DIR)/emit_test $(BUILD_DIR)/receive_test
 
@@ -27,10 +27,10 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/*/%.c
 
 # Test executables
 $(BUILD_DIR)/emit_test: $(TEST_DIR)/emit_test.c $(LIB_NAME)
-	$(CC) $(CFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracer $(LDFLAGS)
+	$(CC) $(CFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracering $(LDFLAGS)
 
 $(BUILD_DIR)/receive_test: $(TEST_DIR)/receive_test.c $(LIB_NAME)
-	$(CC) $(CFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracer $(LDFLAGS)
+	$(CC) $(CFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracering $(LDFLAGS)
 
 test: all
 	@echo "Run ./build/receive_test in one terminal, then ./build/emit_test in another."
