@@ -21,7 +21,7 @@ $(LIB_NAME): $(LIB_OBJS)
 	ar rcs $@ $^
 
 # Compile object files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/*/%.c
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 

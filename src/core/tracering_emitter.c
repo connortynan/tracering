@@ -18,13 +18,13 @@
 #endif
 
 // Very nonportable helper functions
-static uint64_t get_timestamp_ns()
+static inline uint64_t get_timestamp_ns()
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
 }
-static pid_t get_thread_id()
+static inline pid_t get_thread_id()
 {
     return syscall(SYS_gettid);
 }

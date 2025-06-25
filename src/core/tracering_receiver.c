@@ -46,9 +46,8 @@ static int pending_tasks = 0;
 static bool running = false;
 
 // Worker thread function for processing callbacks
-static void *worker_thread(void *arg)
+static void *worker_thread(void *)
 {
-    (void)arg; // Unused
     while (running)
     {
         pthread_mutex_lock(&task_mutex);
