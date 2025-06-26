@@ -11,7 +11,7 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
-#include "tracering_buffer.h"
+#include "../internal/buffer.h"
 
 #ifndef TRACER_ALLOW_OVERWRITE
 #define TRACER_ALLOW_OVERWRITE 0
@@ -43,6 +43,7 @@ int tracer_emit_init(void)
     }
     return 0;
 }
+
 void tracer_emit_shutdown(void)
 {
     if (shared)

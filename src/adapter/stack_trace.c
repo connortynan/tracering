@@ -1,12 +1,13 @@
 #include "tracering/adapter/stack_trace.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
+#include "tracering/adapter/stack_trace_ex.h"
 #include "tracering/receiver.h"
+#include "../internal/dispatcher.h"
+
+#include <pthread.h>
+#include <string.h>
+#include <stdio.h>
 
 #define MAX_STACK_DEPTH 32
-#define MAX_HANDLERS 16
 #define MAX_THREADS 64
 
 typedef struct
@@ -20,29 +21,22 @@ typedef struct
 {
     uint32_t thread_id;
     stack_entry_t stack[MAX_STACK_DEPTH];
-    int stack_top; // -1 means empty stack
-    int active;    // 1 if this slot is in use
+    int stack_top;
+    int active;
 } thread_stack_t;
 
 static thread_stack_t thread_stacks[MAX_THREADS];
-static trace_span_handler_t handlers[MAX_HANDLERS];
-static int handler_count = 0;
 static pthread_mutex_t adapter_mutex = PTHREAD_MUTEX_INITIALIZER;
+static dispatcher_t *span_dispatcher = NULL;
 
-// Fast thread stack lookup - linear search is fine for small MAX_THREADS
 static thread_stack_t *get_thread_stack(uint32_t thread_id)
 {
-    // First try to find existing thread stack
-    for (int i = 0; i < MAX_THREADS; i++)
+    for (int i = 0; i < MAX_THREADS; ++i)
     {
         if (thread_stacks[i].active && thread_stacks[i].thread_id == thread_id)
-        {
             return &thread_stacks[i];
-        }
     }
-
-    // Find empty slot for new thread
-    for (int i = 0; i < MAX_THREADS; i++)
+    for (int i = 0; i < MAX_THREADS; ++i)
     {
         if (!thread_stacks[i].active)
         {
@@ -52,98 +46,12 @@ static thread_stack_t *get_thread_stack(uint32_t thread_id)
             return &thread_stacks[i];
         }
     }
-
-    return NULL; // No available slots
+    return NULL;
 }
 
 static void notify_handlers(const trace_span_t *span)
 {
-    for (int i = 0; i < handler_count; i++)
-    {
-        if (handlers[i])
-        {
-            handlers[i](span);
-        }
-    }
-}
-
-int stack_trace_adapter_init(void)
-{
-    tracer_receiver_register_handler(stack_trace_event_handler);
-    pthread_mutex_lock(&adapter_mutex);
-
-    // Initialize all thread stacks
-    for (int i = 0; i < MAX_THREADS; i++)
-    {
-        thread_stacks[i].active = 0;
-        thread_stacks[i].stack_top = -1;
-    }
-
-    // Clear handlers
-    handler_count = 0;
-    for (int i = 0; i < MAX_HANDLERS; i++)
-    {
-        handlers[i] = NULL;
-    }
-
-    pthread_mutex_unlock(&adapter_mutex);
-    return 0;
-}
-
-void stack_trace_adapter_shutdown(void)
-{
-    pthread_mutex_lock(&adapter_mutex);
-
-    // Clear all thread stacks
-    for (int i = 0; i < MAX_THREADS; i++)
-    {
-        thread_stacks[i].active = 0;
-    }
-
-    // Clear handlers
-    handler_count = 0;
-
-    pthread_mutex_unlock(&adapter_mutex);
-}
-
-void stack_trace_adapter_register_handler(trace_span_handler_t handler)
-{
-    if (!handler)
-        return;
-
-    pthread_mutex_lock(&adapter_mutex);
-
-    if (handler_count < MAX_HANDLERS)
-    {
-        handlers[handler_count++] = handler;
-    }
-
-    pthread_mutex_unlock(&adapter_mutex);
-}
-
-void stack_trace_adapter_unregister_handler(trace_span_handler_t handler)
-{
-    if (!handler)
-        return;
-
-    pthread_mutex_lock(&adapter_mutex);
-
-    // Find and remove handler, shift remaining handlers down
-    for (int i = 0; i < handler_count; i++)
-    {
-        if (handlers[i] == handler)
-        {
-            for (int j = i; j < handler_count - 1; j++)
-            {
-                handlers[j] = handlers[j + 1];
-            }
-            handler_count--;
-            handlers[handler_count] = NULL;
-            break;
-        }
-    }
-
-    pthread_mutex_unlock(&adapter_mutex);
+    dispatcher_emit(span_dispatcher, span);
 }
 
 void stack_trace_event_handler(const trace_event_t *event)
@@ -152,54 +60,99 @@ void stack_trace_event_handler(const trace_event_t *event)
         return;
 
     pthread_mutex_lock(&adapter_mutex);
-
     thread_stack_t *ts = get_thread_stack(event->thread_id);
     if (!ts)
     {
         pthread_mutex_unlock(&adapter_mutex);
-        return; // No available thread slots
+        return;
     }
 
-    // Check if this is an end event (matches top of stack)
     if (ts->stack_top >= 0 && strcmp(ts->stack[ts->stack_top].label, event->data) == 0)
     {
-        // End event - pop stack and emit span
-        stack_entry_t popped = ts->stack[ts->stack_top];
-        ts->stack_top--;
+        stack_entry_t popped = ts->stack[ts->stack_top--];
 
-        trace_span_t span;
-        strncpy(span.full_path, popped.full_path, sizeof(span.full_path) - 1);
-        span.start_timestamp = popped.start_timestamp;
-        span.end_timestamp = event->timestamp;
-        span.thread_id = event->thread_id;
+        trace_span_t span = {
+            .start_timestamp = popped.start_timestamp,
+            .end_timestamp = event->timestamp,
+            .thread_id = event->thread_id};
+
+        snprintf(span.full_path, sizeof(span.full_path), "%s", popped.full_path);
 
         pthread_mutex_unlock(&adapter_mutex);
         notify_handlers(&span);
     }
-    else
+    else if (ts->stack_top < MAX_STACK_DEPTH - 1)
     {
-        // Start event - push onto stack
-        if (ts->stack_top < MAX_STACK_DEPTH - 1)
-        {
-            ts->stack_top++;
-            stack_entry_t *entry = &ts->stack[ts->stack_top];
+        ts->stack_top++;
+        stack_entry_t *entry = &ts->stack[ts->stack_top];
+        snprintf(entry->label, sizeof(entry->label), "%s", event->data);
+        entry->start_timestamp = event->timestamp;
 
-            strncpy(ts->stack[ts->stack_top].label, event->data, sizeof(ts->stack[ts->stack_top].label) - 1);
-            ts->stack[ts->stack_top].start_timestamp = event->timestamp;
-            if (ts->stack_top == 0)
-            {
-                // Top-level: full path is just the label
-                strncpy(entry->full_path, event->data, sizeof(entry->full_path) - 1);
-                entry->full_path[sizeof(entry->full_path) - 1] = '\0';
-            }
-            else
-            {
-                // Build from parent's full_path + ";" + label
-                const char *parent_path = ts->stack[ts->stack_top - 1].full_path;
-                snprintf(entry->full_path, sizeof(entry->full_path), "%s;%s", parent_path, entry->label); // todo: fix truncation warning
-                entry->full_path[sizeof(entry->full_path) - 1] = '\0';
-            }
+        if (ts->stack_top == 0)
+        {
+            strncpy(entry->full_path, entry->label, sizeof(entry->full_path) - 1);
         }
+        else
+        {
+            // Copy to temp buffer to avoid overlap in snprintf
+            char temp_path[sizeof(entry->full_path)];
+            snprintf(temp_path, sizeof(temp_path), "%s;%s",
+                     ts->stack[ts->stack_top - 1].full_path,
+                     entry->label);
+            memcpy(entry->full_path, temp_path, sizeof(entry->full_path));
+        }
+        entry->full_path[sizeof(entry->full_path) - 1] = '\0';
         pthread_mutex_unlock(&adapter_mutex);
     }
+    else
+    {
+        pthread_mutex_unlock(&adapter_mutex);
+    }
+}
+
+int tracer_adapter_stktrce_init(void)
+{
+    span_dispatcher = dispatcher_create(sizeof(trace_span_t), 0);
+    tracer_receiver_register_handler(stack_trace_event_handler);
+
+    pthread_mutex_lock(&adapter_mutex);
+    memset(thread_stacks, 0, sizeof(thread_stacks));
+    pthread_mutex_unlock(&adapter_mutex);
+
+    return 0;
+}
+
+void tracer_adapter_stktrce_shutdown(void)
+{
+    pthread_mutex_lock(&adapter_mutex);
+    memset(thread_stacks, 0, sizeof(thread_stacks));
+    pthread_mutex_unlock(&adapter_mutex);
+
+    dispatcher_destroy(span_dispatcher);
+    span_dispatcher = NULL;
+}
+
+void tracer_adapter_stktrce_register_handler_ex(trace_span_handler_ex_t fn, void *ctx)
+{
+    dispatcher_register(span_dispatcher, (dispatcher_callback_t)fn, ctx);
+}
+
+void tracer_adapter_stktrce_unregister_handler_ex(trace_span_handler_ex_t fn, void *ctx)
+{
+    dispatcher_unregister(span_dispatcher, (dispatcher_callback_t)fn, ctx);
+}
+
+static void adapter(const void *event, void *ctx)
+{
+    ((trace_event_handler_t)ctx)((const trace_event_t *)event);
+}
+
+void tracer_adapter_stktrce_register_handler(trace_span_handler_t fn)
+{
+    dispatcher_register(span_dispatcher, adapter, (void *)fn);
+}
+
+void tracer_adapter_stktrce_unregister_handler(trace_span_handler_t fn)
+{
+    dispatcher_unregister(span_dispatcher, adapter, (void *)fn);
 }

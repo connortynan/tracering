@@ -18,13 +18,10 @@ extern "C"
 
     typedef void (*trace_span_handler_t)(const trace_span_t *span);
 
-    int stack_trace_adapter_init(void);
-    void stack_trace_adapter_shutdown(void);
-    void stack_trace_adapter_register_handler(trace_span_handler_t handler);
-    void stack_trace_adapter_unregister_handler(trace_span_handler_t handler);
-
-    // This function should be registered as a trace event handler with the receiver
-    void stack_trace_event_handler(const trace_event_t *event);
+    int tracer_adapter_stktrce_init(void);
+    void tracer_adapter_stktrce_shutdown(void);
+    void tracer_adapter_stktrce_register_handler(trace_span_handler_t handler);
+    void tracer_adapter_stktrce_unregister_handler(trace_span_handler_t handler);
 
 #ifdef __cplusplus
 }

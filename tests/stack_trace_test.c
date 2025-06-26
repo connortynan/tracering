@@ -59,15 +59,14 @@ int main(void)
 
     tracer_receiver_init();
 
-    if (stack_trace_adapter_init() != 0)
+    if (tracer_adapter_stktrce_init() != 0)
     {
         fprintf(stderr, "Failed to initialize stack trace adapter\n");
         return 1;
     }
 
     // Register handlers
-    tracer_receiver_register_handler(stack_trace_event_handler);
-    stack_trace_adapter_register_handler(trace_span_handler);
+    tracer_adapter_stktrce_register_handler(trace_span_handler);
 
     // Start receiver thread
     pthread_t receiver_tid;
@@ -79,7 +78,7 @@ int main(void)
 
     pthread_join(receiver_tid, NULL);
 
-    stack_trace_adapter_shutdown();
+    tracer_adapter_stktrce_shutdown();
     tracer_receiver_shutdown();
 
     printf("Stack trace test completed\n");
