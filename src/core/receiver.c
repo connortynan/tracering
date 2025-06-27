@@ -32,8 +32,8 @@ void tracer_receiver_init(void)
         return;
 
     atomic_store_explicit(&shared_buffer->read_index, 0, memory_order_release);
-    atomic_store_explicit(&shared_buffer->write_index, 0, memory_order_release);
-    memset(shared_buffer->valid, 0, sizeof(shared_buffer->valid));
+    atomic_store_explicit(&shared_buffer->emit_write_index, 0, memory_order_release);
+    atomic_store_explicit(&shared_buffer->rec_write_index, 0, memory_order_release);
 
     receiver_dispatcher = dispatcher_create(/*max_handlers=*/16, /*num_threads=*/4);
 }
@@ -62,18 +62,14 @@ void tracer_receiver_poll(void)
         return;
 
     uint32_t read_idx = atomic_load_explicit(&shared_buffer->read_index, memory_order_acquire);
-    uint32_t write_idx = atomic_load_explicit(&shared_buffer->write_index, memory_order_acquire);
+    uint32_t write_idx = atomic_load_explicit(&shared_buffer->rec_write_index, memory_order_acquire);
 
     while (read_idx != write_idx)
     {
         uint32_t idx = read_idx & (TRACE_BUFFER_SIZE - 1);
-        if (GET_EVENT_VALID(shared_buffer, idx))
-        {
-            trace_event_t event = shared_buffer->events[idx];
-            CLEAR_EVENT_VALID(shared_buffer, idx);
-            dispatcher_emit(receiver_dispatcher, &event);
-        }
+        dispatcher_emit(receiver_dispatcher, &shared_buffer->events[idx]);
         atomic_store_explicit(&shared_buffer->read_index, ++read_idx, memory_order_release);
+        write_idx = atomic_load_explicit(&shared_buffer->rec_write_index, memory_order_acquire);
     }
 }
 

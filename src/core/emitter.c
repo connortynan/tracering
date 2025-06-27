@@ -67,7 +67,7 @@ void tracer_emit(const trace_event_t *event)
         return;
 
 #if !TRACER_ALLOW_OVERWRITE
-    unsigned int write = atomic_load_explicit(&shared->write_index, memory_order_relaxed);
+    unsigned int write = atomic_load_explicit(&shared->emit_write_index, memory_order_relaxed);
     unsigned int read = atomic_load_explicit(&shared->read_index, memory_order_acquire);
 
     if (write - read >= TRACE_BUFFER_SIZE)
@@ -76,8 +76,9 @@ void tracer_emit(const trace_event_t *event)
         return;
     }
 #endif
-    unsigned int index = atomic_fetch_add_explicit(&shared->write_index, 1, memory_order_acq_rel) & (TRACE_BUFFER_SIZE - 1);
+    unsigned int write_index = atomic_fetch_add_explicit(&shared->emit_write_index, 1, memory_order_acq_rel);
+    unsigned int index = write_index & (TRACE_BUFFER_SIZE - 1);
 
     shared->events[index] = *event;
-    SET_EVENT_VALID(shared, index);
+    atomic_store_explicit(&shared->rec_write_index, write_index + 1, memory_order_release);
 }
