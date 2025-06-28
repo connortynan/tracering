@@ -24,7 +24,8 @@ TESTS = \
 	$(BUILD_DIR)/emit_test \
 	$(BUILD_DIR)/receive_test \
 	$(BUILD_DIR)/stack_trace_test \
-	$(BUILD_DIR)/stack_trace_gui
+	$(BUILD_DIR)/stack_trace_gui \
+	$(BUILD_DIR)/stack_trace_window_gui
 
 .PHONY: all clean core adapter tests
 
@@ -61,14 +62,16 @@ $(BUILD_DIR)/receive_test: $(TEST_DIR)/receive_test.c $(LIB_CORE)
 $(BUILD_DIR)/stack_trace_test: $(TEST_DIR)/stack_trace_test.c $(LIB_CORE) $(LIB_ADAPTERS)
 	$(CC) $(CFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracering -ltracering-adapter $(LDFLAGS)
 
-# New: C++ stack trace GUI/test
 $(BUILD_DIR)/stack_trace_gui: $(TEST_DIR)/stack_trace_gui.cpp $(LIB_CORE) $(LIB_ADAPTERS)
 	$(CXX) $(CXXFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracering -ltracering-adapter -lncurses $(LDFLAGS)
 
+$(BUILD_DIR)/stack_trace_window_gui: $(TEST_DIR)/stack_trace_window_gui.cpp $(LIB_CORE) $(LIB_ADAPTERS)
+	$(CXX) $(CXXFLAGS) $< -o $@ -L$(BUILD_DIR) -ltracering -ltracering-adapter -lSDL2 -lSDL2_ttf $(LDFLAGS)
+
 # Run test message
 test: $(TESTS)
-	@echo "Run ./build/receive_test or ./build/stack_trace_test or ./build/stack_trace_gui in one terminal,"
-	@echo "then ./build/emit_test in another."
+	@echo "Run a receiver test in one terminal: ./build/receive_test ./build/stack_trace_test ./build/stack_trace_gui or ./build/stack_trace_window_gui"
+	@echo "Then run one (or more) emit tests in another terminal: ./build/emit_test"
 
 clean:
 	rm -rf $(BUILD_DIR)
